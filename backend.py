@@ -455,31 +455,37 @@ def create_nta_geojson_full():
     }
 
 
-def get_nta_traffic_to_others(selected_nta, year_month=None, direction="outgoing"):
+def get_nta_traffic_to_others(selected_nta, year_month=None, direction="outgoing", exclude_self=False):
     """
     Get traffic from a selected NTA to/from all other NTAs.
-    
+
     Args:
         selected_nta: The NTA to analyze
         year_month: Optional filter for specific year-month
         direction: 'outgoing' (rides from selected_nta) or 'incoming' (rides to selected_nta)
-    
+        exclude_self: If True, drop any rides where the origin and destination
+            are both the selected NTA (i.e. internal trips).
+
     Returns:
         DataFrame with NTA and ride_count columns for all connected NTAs
     """
     filtered = df if year_month is None else df[df["year_month"] == year_month]
-    
+
     if direction == "outgoing":
         # Get rides starting from selected_nta
         nta_df = filtered[filtered["start_NTA"] == selected_nta]
+        if exclude_self:
+            nta_df = nta_df[nta_df["end_NTA"] != selected_nta]
         traffic = nta_df.groupby("end_NTA")["ride_count"].sum().reset_index()
         traffic.columns = ["NTA", "ride_count"]
     else:
         # Get rides ending at selected_nta
         nta_df = filtered[filtered["end_NTA"] == selected_nta]
+        if exclude_self:
+            nta_df = nta_df[nta_df["start_NTA"] != selected_nta]
         traffic = nta_df.groupby("start_NTA")["ride_count"].sum().reset_index()
         traffic.columns = ["NTA", "ride_count"]
-    
+
     return traffic
 
 

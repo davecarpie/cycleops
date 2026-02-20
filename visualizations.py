@@ -575,18 +575,21 @@ def get_nta_flow_heatmap(year_month=None, top_n=20):
 
 
 @st.cache_resource
-def get_nta_choropleth_map(selected_nta=None, year_month=None, direction="outgoing"):
+def get_nta_choropleth_map(selected_nta=None, year_month=None, direction="outgoing", exclude_self=False):
     """
     Create a choropleth map showing traffic intensity for neighborhoods.
-    
+
     If selected_nta is provided, shows traffic to/from that specific NTA.
     Otherwise, shows total traffic for all NTAs.
-    
+
     Args:
         selected_nta: Optional NTA to show connections for
         year_month: Optional filter for specific period
         direction: 'outgoing' or 'incoming'
-    
+        exclude_self: When True and a `selected_nta` is given, exclude the
+            rides that both originate and terminate in that NTA from the data
+            used to color the map. This hides internal trips on the heat map.
+
     Returns:
         plotly figure with choropleth map
     """
@@ -603,11 +606,14 @@ def get_nta_choropleth_map(selected_nta=None, year_month=None, direction="outgoi
     
     # Get traffic data
     if selected_nta:
-        traffic_df = be.get_nta_traffic_to_others(selected_nta, year_month, direction)
-        # Add the selected NTA with 0 rides (to show it on map)
+        traffic_df = be.get_nta_traffic_to_others(
+            selected_nta, year_month, direction, exclude_self=exclude_self
+        )
+        # If exclude_self removed the self row, or if it's missing otherwise,
+        # still include the selected NTA with zero so it can be highlighted.
         if selected_nta not in traffic_df["NTA"].values:
             traffic_df = pd.concat([
-                traffic_df, 
+                traffic_df,
                 pd.DataFrame({"NTA": [selected_nta], "ride_count": [0]})
             ], ignore_index=True)
     else:

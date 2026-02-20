@@ -140,12 +140,23 @@ with heatmap_tab:
     
     st.info(f"🔵 The selected neighborhood ({selected_nta}) is highlighted with a blue border.")
     
+    # Option: exclude rides that start and end in the same NTA
+    exclude_internal = st.checkbox(
+        "Exclude rides that both start and end in this NTA",
+        help="Remove internal trips from the heatmap so only flows to/from other neighborhoods are shown."
+    )
+    
     # Render the choropleth map using shared controls
-    fig = viz.get_nta_choropleth_map(selected_nta, selected_year_month, direction)
+    fig = viz.get_nta_choropleth_map(
+        selected_nta, selected_year_month, direction, exclude_self=exclude_internal
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     direction_verb = "going to" if direction == "outgoing" else "coming from"
-    st.caption(f"*Darker shades indicate more rides {direction_verb} each neighborhood.*")
+    caption_text = f"*Darker shades indicate more rides {direction_verb} each neighborhood.*"
+    if exclude_internal:
+        caption_text += " (Internal trips excluded.)"
+    st.caption(caption_text)
     
     # Bar chart comparison below the map - show top destinations/origins for selected NTA
     st.markdown("---")
