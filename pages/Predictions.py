@@ -1,8 +1,9 @@
 """
 Predictions - Streamlit App
 
-Build linear regression predictions for bike flows between two NTAs.
-Compares simple train/val/test split with TimeSeriesSplit cross-validation.
+Build predictive models for bike flows between two NTAs.
+Choose between Linear Regression and Random Forest, then compare
+a simple train/val/test split with TimeSeriesSplit cross-validation.
 """
 
 import streamlit as st
@@ -10,6 +11,7 @@ import pandas as pd
 import numpy as np
 import backend as be
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
 import plotly.graph_objects as go
@@ -20,15 +22,31 @@ st.header("🔮 Bike Flow Predictions")
 
 st.markdown(
     """
-Build a simple linear regression model to predict bike flows between two neighborhoods.
-The model uses day of week, month, and the previous 5 days of data as features.
+Predict daily bike flows between two neighborhoods using either
+**Linear Regression** or **Random Forest**.  Each algorithm is evaluated with
+two training strategies — a simple chronological split and time-series
+cross-validation — so you can compare how each approach generalises.
 """
 )
 
 
+# ---------------------------------------------------------------------------
+# Helper: build a model instance from the selected algorithm
+# ---------------------------------------------------------------------------
+def _make_model(model_type, n_estimators=100, max_depth=10):
+    if model_type == "Random Forest":
+        return RandomForestRegressor(
+            n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1
+        )
+    return LinearRegression()
+
+
+# ---------------------------------------------------------------------------
+# Core training function (cached)
+# ---------------------------------------------------------------------------
 @st.cache_data
-def train_models(start_nta, end_nta, train_pct, val_pct):
-    """Train both models and return all results."""
+def train_models(start_nta, end_nta, train_pct, val_pct, model_type, n_estimators=100, max_depth=10):
+    """Train both split strategies for the chosen algorithm and return all results."""
     df_all = be.load_all_data()
 
     df_filtered = df_all[
@@ -84,12 +102,14 @@ def train_models(start_nta, end_nta, train_pct, val_pct):
     X_pred = pred_data[feature_cols]
     y_pred_actual = pred_data["ride_count"]
 
-    model1 = LinearRegression()
+    # --- Strategy 1: Simple Split (train only → predict val & test) ---
+    model1 = _make_model(model_type, n_estimators, max_depth)
     model1.fit(X_train, y_train)
     y_train_pred_m1 = model1.predict(X_train)
     y_val_pred_m1 = model1.predict(X_val)
     y_test_pred_m1 = model1.predict(X_pred)
 
+    # --- Strategy 2: Time Series CV (on train+val) then final fit ---
     X_trainval = pd.concat([X_train, X_val], ignore_index=True)
     y_trainval = pd.concat([y_train, y_val], ignore_index=True)
     tscv = TimeSeriesSplit(n_splits=5)
@@ -98,7 +118,7 @@ def train_models(start_nta, end_nta, train_pct, val_pct):
     for fold, (train_idx, test_idx) in enumerate(tscv.split(X_trainval)):
         X_tr, X_te = X_trainval.iloc[train_idx], X_trainval.iloc[test_idx]
         y_tr, y_te = y_trainval.iloc[train_idx], y_trainval.iloc[test_idx]
-        model_cv = LinearRegression()
+        model_cv = _make_model(model_type, n_estimators, max_depth)
         model_cv.fit(X_tr, y_tr)
         pred = model_cv.predict(X_te)
         mae = mean_absolute_error(y_te, pred)
@@ -106,7 +126,7 @@ def train_models(start_nta, end_nta, train_pct, val_pct):
         r2 = r2_score(y_te, pred)
         cv_rows.append({"Fold": fold + 1, "MAE": mae, "RMSE": rmse, "R²": r2})
 
-    model2 = LinearRegression()
+    model2 = _make_model(model_type, n_estimators, max_depth)
     model2.fit(X_trainval, y_trainval)
     y_test_pred_m2 = model2.predict(X_pred)
 
@@ -125,6 +145,7 @@ def train_models(start_nta, end_nta, train_pct, val_pct):
         "model2": model2,
         "cv_rows": cv_rows,
         "feature_cols": feature_cols,
+        "model_type": model_type,
     }
 
 
@@ -135,6 +156,9 @@ def calculate_metrics(y_true, y_pred, label=""):
     return {"Data Set": label, "MAE": f"{mae:.2f}", "RMSE": f"{rmse:.2f}", "R²": f"{r2:.3f}"}
 
 
+# ---------------------------------------------------------------------------
+# Sidebar-style config widgets
+# ---------------------------------------------------------------------------
 all_ntas = be.get_all_ntas()
 
 st.subheader("Select Two Neighborhoods")
@@ -156,6 +180,28 @@ with col2:
         help="Select the destination neighborhood",
     )
 
+st.subheader("Model Configuration")
+
+model_type = st.radio(
+    "Algorithm:",
+    options=["Linear Regression", "Random Forest"],
+    horizontal=True,
+    help="Linear Regression fits a weighted sum of features. Random Forest builds an ensemble of decision trees.",
+)
+
+rf_n_estimators = 100
+rf_max_depth = 10
+if model_type == "Random Forest":
+    with st.expander("Random Forest Settings"):
+        rf_n_estimators = st.slider(
+            "Number of trees", 10, 500, 100, 10,
+            help="More trees generally improve accuracy but take longer to train.",
+        )
+        rf_max_depth = st.slider(
+            "Max tree depth", 2, 30, 10, 1,
+            help="Deeper trees capture more complex patterns but may overfit.",
+        )
+
 st.subheader("Data Split Configuration")
 col1, col2, col3 = st.columns(3)
 
@@ -166,7 +212,7 @@ with col1:
         90,
         70,
         5,
-        help="Percentage of data for training",
+        help="Percentage of data used to train the model",
     )
 with col2:
     val_pct = st.slider(
@@ -175,24 +221,27 @@ with col2:
         50,
         15,
         5,
-        help="Percentage of data for validation",
+        help="Percentage of data used for validation / cross-validation",
     )
 with col3:
-    pred_pct = 100 - train_pct - val_pct
-    st.metric("Prediction %", f"{pred_pct}%", help="Remaining data for prediction testing")
+    test_pct = 100 - train_pct - val_pct
+    st.metric("Test %", f"{test_pct}%")
 
-if pred_pct < 0:
-    st.error("Training and Validation percentages sum to more than 100%!")
+if test_pct <= 0:
+    st.error("Training + Validation percentages must be less than 100% to leave room for a test set.")
     st.stop()
 
-if st.button("Load Data & Train Model", type="primary"):
+if st.button("Train Models", type="primary"):
     with st.spinner("Training models..."):
-        results = train_models(start_nta, end_nta, train_pct, val_pct)
+        results = train_models(
+            start_nta, end_nta, train_pct, val_pct,
+            model_type, rf_n_estimators, rf_max_depth,
+        )
         if results is None:
             st.error(f"No data found for flows from {start_nta} to {end_nta}")
         else:
             st.session_state.results = results
-            st.success("✅ Models trained! Scroll down to see results.")
+            st.success("Models trained successfully!")
 
 if "results" in st.session_state:
     results = st.session_state.results
@@ -211,16 +260,20 @@ if "results" in st.session_state:
     model2 = results["model2"]
     cv_rows = results["cv_rows"]
     feature_cols = results["feature_cols"]
+    trained_model_type = results["model_type"]
 
     st.subheader("📊 Data Summary")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     with col1:
-        st.metric("Training Set", f"{len(train_data)} days")
+        st.metric("Algorithm", trained_model_type)
     with col2:
-        st.metric("Validation Set", f"{len(val_data)} days")
+        st.metric("Training Set", f"{len(train_data)} days")
     with col3:
-        st.metric("Prediction Set", f"{len(pred_data)} days")
+        st.metric("Validation Set", f"{len(val_data)} days")
+    with col4:
+        st.metric("Test Set", f"{len(pred_data)} days")
 
+    # Readable feature names for display
     day_names = {
         "dow_1": "Tuesday",
         "dow_2": "Wednesday",
@@ -266,25 +319,31 @@ if "results" in st.session_state:
             readable_names.append(col)
 
     st.subheader("📈 Model Comparison")
+
+    # --- Helper: build month feature table ---
+    def _get_month_df(model, readable_names, trained_model_type):
+        is_rf = trained_model_type == "Random Forest"
+        value_col = "Importance" if is_rf else "Coefficient"
+        values = model.feature_importances_ if is_rf else model.coef_
+        full_df = pd.DataFrame({"Feature": readable_names, value_col: values})
+        month_df = full_df[full_df["Feature"].str.startswith("Month:")].sort_values(
+            value_col, ascending=False
+        ).reset_index(drop=True)
+        return month_df, value_col
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.write("**Model 1: Train/Val/Test Split**")
+        st.write("**Simple Split** — trained on training set only")
         metrics_m1 = [
             calculate_metrics(y_train, y_train_pred_m1, "Train"),
             calculate_metrics(y_val, y_val_pred_m1, "Validation"),
             calculate_metrics(y_pred_actual, y_test_pred_m1, "Test"),
         ]
-        st.dataframe(pd.DataFrame(metrics_m1), use_container_width=True)
-        st.write("**Top Coefficients:**")
-        coef_m1_df = pd.DataFrame(
-            {"Feature": readable_names, "Coefficient": model1.coef_}
-        ).sort_values("Coefficient", ascending=False)
-        st.dataframe(coef_m1_df.head(10), use_container_width=True)
-        st.caption(f"Intercept: {model1.intercept_:.2f}")
+        st.dataframe(pd.DataFrame(metrics_m1), use_container_width=True, hide_index=True)
 
     with col2:
-        st.write("**Model 2: Time Series CV**")
+        st.write("**Time Series CV** — 5-fold cross-validation on train+val")
         cv_metrics_df = pd.DataFrame(cv_rows)
         for col in ["MAE", "RMSE", "R²"]:
             cv_metrics_df[col] = pd.to_numeric(cv_metrics_df[col], errors="coerce")
@@ -293,7 +352,7 @@ if "results" in st.session_state:
             "Average RMSE": cv_metrics_df["RMSE"].mean(),
             "Average R²": cv_metrics_df["R²"].mean(),
         }
-        st.dataframe(cv_metrics_df, use_container_width=True)
+        st.dataframe(cv_metrics_df, use_container_width=True, hide_index=True)
         metrics_m2 = [
             {
                 "Data Set": "CV Average",
@@ -303,63 +362,66 @@ if "results" in st.session_state:
             },
             calculate_metrics(y_pred_actual, y_test_pred_m2, "Final Test"),
         ]
-        st.dataframe(pd.DataFrame(metrics_m2), use_container_width=True)
-        st.write("**Top Coefficients:**")
-        coef_m2_df = pd.DataFrame(
-            {"Feature": readable_names, "Coefficient": model2.coef_}
-        ).sort_values("Coefficient", ascending=False)
-        st.dataframe(coef_m2_df.head(10), use_container_width=True)
-        st.caption(f"Intercept: {model2.intercept_:.2f}")
+        st.dataframe(pd.DataFrame(metrics_m2), use_container_width=True, hide_index=True)
+
+    # --- Monthly coefficients / importances (shared header, side by side) ---
+    is_rf = trained_model_type == "Random Forest"
+    if is_rf:
+        st.subheader("📅 Monthly Feature Importances")
+        st.caption(
+            "Each score (0–1) shows how much a month feature helps reduce prediction "
+            "error across all trees. Higher = more influential."
+        )
+    else:
+        st.subheader("📅 Monthly Coefficients")
+        st.caption(
+            "Each coefficient shows the change in predicted bike flow "
+            "relative to **January** (the reference month). "
+            "Positive = more rides than January, negative = fewer."
+        )
+
+    month_df_m1, value_col = _get_month_df(model1, readable_names, trained_model_type)
+    month_df_m2, _ = _get_month_df(model2, readable_names, trained_model_type)
+    month_height = (max(len(month_df_m1), len(month_df_m2)) + 1) * 35 + 3
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Simple Split**")
+        st.dataframe(month_df_m1, use_container_width=True, height=month_height)
+        if not is_rf:
+            st.caption(
+                f"**Intercept: {model1.intercept_:.2f}** — baseline prediction "
+                f"for a Monday in January when all other features are zero."
+            )
+    with col2:
+        st.write("**Time Series CV**")
+        st.dataframe(month_df_m2, use_container_width=True, height=month_height)
+        if not is_rf:
+            st.caption(
+                f"**Intercept: {model2.intercept_:.2f}** — baseline prediction "
+                f"for a Monday in January when all other features are zero."
+            )
 
     st.subheader("📊 Predictions Visualization")
     model_choice = st.radio(
-        "**Select which model's predictions to display:**",
-        options=["Model 1: Train/Val/Test Split", "Model 2: Time Series CV"],
+        "**Select which training strategy's predictions to display:**",
+        options=["Simple Split", "Time Series CV"],
         horizontal=True,
     )
 
-    if model_choice == "Model 1: Train/Val/Test Split":
+    if model_choice == "Simple Split":
         y_pred_pred = y_test_pred_m1
-        model_name = "Model 1 (Train/Val/Test Split)"
+        model_name = f"{trained_model_type} (Simple Split)"
     else:
         y_pred_pred = y_test_pred_m2
-        model_name = "Model 2 (Time Series CV)"
+        model_name = f"{trained_model_type} (Time Series CV)"
 
     max_pred_diff = float(np.max(np.abs(y_test_pred_m1 - y_test_pred_m2)))
     selected_mae = float(mean_absolute_error(y_pred_actual, y_pred_pred))
     st.caption(
-        f"Selected model test MAE: {selected_mae:.2f}. "
-        f"Max abs difference between model predictions: {max_pred_diff:.2f}."
+        f"Test MAE: **{selected_mae:.2f}**  ·  "
+        f"Max difference between strategies: {max_pred_diff:.2f}"
     )
-
-    st.write(f"**Test Set: Predicted vs Actual Over Time ({model_name})**")
-    fig_test = go.Figure()
-    fig_test.add_trace(
-        go.Scatter(
-            x=pred_data["started_date"],
-            y=y_pred_actual,
-            mode="lines",
-            name="Actual",
-            line=dict(color="#636EFA", width=2),
-        )
-    )
-    fig_test.add_trace(
-        go.Scatter(
-            x=pred_data["started_date"],
-            y=y_pred_pred,
-            mode="lines",
-            name="Predicted",
-            line=dict(color="#EF553B", width=2, dash="dash"),
-        )
-    )
-    fig_test.update_layout(
-        title=f"Test Set Predictions ({model_name})",
-        xaxis_title="Date",
-        yaxis_title="Bike Flows",
-        hovermode="x unified",
-        height=400,
-    )
-    st.plotly_chart(fig_test, use_container_width=True)
 
     tab1, tab2, tab3, tab4 = st.tabs(
         ["Full Time Series", "Actual vs Predicted Scatter", "Residuals", "Error Distribution"]
@@ -430,8 +492,8 @@ if "results" in st.session_state:
                 hovertemplate="%{text}<extra></extra>",
             )
         )
-        min_val = min(y_pred_actual.min(), y_pred_pred.min())
-        max_val = max(y_pred_actual.max(), y_pred_pred.max())
+        min_val = min(y_pred_actual.min(), float(np.min(y_pred_pred)))
+        max_val = max(y_pred_actual.max(), float(np.max(y_pred_pred)))
         fig_scatter.add_trace(
             go.Scatter(
                 x=[min_val, max_val],
@@ -514,6 +576,6 @@ if "results" in st.session_state:
                 ],
             }
         )
-        st.dataframe(error_stats, use_container_width=True)
+        st.dataframe(error_stats, use_container_width=True, hide_index=True)
 else:
-    st.info("👆 Select two NTAs and click 'Load Data & Train Model' to begin")
+    st.info("👆 Select two NTAs, choose an algorithm, and click **Train Models** to begin.")
