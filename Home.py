@@ -6,3 +6,4 @@ st.set_page_config(page_title="Home", layout="centered")
 st.title("CycleOps — Home")
 
 st.write("The homepage of the cycleops team")
+ 
