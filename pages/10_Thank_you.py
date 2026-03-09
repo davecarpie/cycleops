@@ -4,7 +4,7 @@ import streamlit as st
 def show() -> None:
 	"""Render the Thank You page. Call `show()` from another module to display."""
 	st.title("Thank You")
-	st.write("Thanks for exploring CycleOps.")
+	st.write("Thanks for exploring CyclOps.")
 	st.write("We appreciate your interest and feedback.")
 
 
