@@ -134,6 +134,7 @@ def train_models(start_nta, end_nta, train_pct, val_pct, model_type, n_estimator
         "train_data": train_data,
         "val_data": val_data,
         "pred_data": pred_data,
+        "df_filtered": df_filtered,
         "y_train": y_train,
         "y_val": y_val,
         "y_pred_actual": y_pred_actual,
@@ -320,16 +321,16 @@ if "results" in st.session_state:
 
     st.subheader("📈 Model Comparison")
 
-    # --- Helper: build month feature table ---
-    def _get_month_df(model, readable_names, trained_model_type):
+    # --- Helper: build feature table by prefix ---
+    def _get_feature_df(model, readable_names, trained_model_type, prefix):
         is_rf = trained_model_type == "Random Forest"
         value_col = "Importance" if is_rf else "Coefficient"
         values = model.feature_importances_ if is_rf else model.coef_
         full_df = pd.DataFrame({"Feature": readable_names, value_col: values})
-        month_df = full_df[full_df["Feature"].str.startswith("Month:")].sort_values(
+        filtered_df = full_df[full_df["Feature"].str.startswith(prefix)].sort_values(
             value_col, ascending=False
         ).reset_index(drop=True)
-        return month_df, value_col
+        return filtered_df, value_col
 
     col1, col2 = st.columns(2)
 
@@ -364,43 +365,114 @@ if "results" in st.session_state:
         ]
         st.dataframe(pd.DataFrame(metrics_m2), use_container_width=True, hide_index=True)
 
-    # --- Monthly coefficients / importances (shared header, side by side) ---
+    # --- Lag coefficients / importances (shared header, side by side) ---
     is_rf = trained_model_type == "Random Forest"
     if is_rf:
-        st.subheader("📅 Monthly Feature Importances")
+        st.subheader("📅 Lag Feature Importances")
         st.caption(
-            "Each score (0–1) shows how much a month feature helps reduce prediction "
+            "Each score (0–1) shows how much a lag feature helps reduce prediction "
             "error across all trees. Higher = more influential."
         )
     else:
-        st.subheader("📅 Monthly Coefficients")
+        st.subheader("📅 Lag Coefficients")
         st.caption(
-            "Each coefficient shows the change in predicted bike flow "
-            "relative to **January** (the reference month). "
-            "Positive = more rides than January, negative = fewer."
+            "Each coefficient shows how much yesterday's (or earlier days') ride count "
+            "contributes to today's prediction. For example, a coefficient of 0.5 on "
+            "Lag 1 means that for every additional ride yesterday, today's prediction "
+            "increases by 0.5 rides."
         )
 
-    month_df_m1, value_col = _get_month_df(model1, readable_names, trained_model_type)
-    month_df_m2, _ = _get_month_df(model2, readable_names, trained_model_type)
-    month_height = (max(len(month_df_m1), len(month_df_m2)) + 1) * 35 + 3
+    lag_df_m1, value_col = _get_feature_df(model1, readable_names, trained_model_type, "Lag ")
+    lag_df_m2, _ = _get_feature_df(model2, readable_names, trained_model_type, "Lag ")
+    lag_height = (max(len(lag_df_m1), len(lag_df_m2)) + 1) * 35 + 3
 
     col1, col2 = st.columns(2)
     with col1:
         st.write("**Simple Split**")
-        st.dataframe(month_df_m1, use_container_width=True, height=month_height)
+        st.dataframe(lag_df_m1, use_container_width=True, height=lag_height)
+    with col2:
+        st.write("**Time Series CV**")
+        st.dataframe(lag_df_m2, use_container_width=True, height=lag_height)
+
+    # --- Day of Week coefficients / importances ---
+    if is_rf:
+        st.subheader("📆 Day of Week Feature Importances")
+        st.caption(
+            "Each score (0–1) shows how much a day-of-week feature helps reduce prediction "
+            "error across all trees. Higher = more influential."
+        )
+    else:
+        st.subheader("📆 Day of Week Coefficients")
+        st.caption(
+            "Each coefficient shows the change in predicted rides relative to "
+            "**Monday** (the reference day). Positive = more rides than Monday, "
+            "negative = fewer."
+        )
+
+    dow_df_m1, _ = _get_feature_df(model1, readable_names, trained_model_type, "Day: ")
+    dow_df_m2, _ = _get_feature_df(model2, readable_names, trained_model_type, "Day: ")
+    dow_height = (max(len(dow_df_m1), len(dow_df_m2)) + 1) * 35 + 3
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Simple Split**")
+        st.dataframe(dow_df_m1, use_container_width=True, height=dow_height)
         if not is_rf:
             st.caption(
                 f"**Intercept: {model1.intercept_:.2f}** — baseline prediction "
-                f"for a Monday in January when all other features are zero."
+                f"when all features are zero."
             )
     with col2:
         st.write("**Time Series CV**")
-        st.dataframe(month_df_m2, use_container_width=True, height=month_height)
+        st.dataframe(dow_df_m2, use_container_width=True, height=dow_height)
         if not is_rf:
             st.caption(
                 f"**Intercept: {model2.intercept_:.2f}** — baseline prediction "
-                f"for a Monday in January when all other features are zero."
+                f"when all features are zero."
             )
+
+    # --- Single-date prediction ---
+    st.subheader("🔎 Predict for a Specific Date")
+    df_filtered = results["df_filtered"]
+    all_dates = df_filtered["started_date"].dt.date
+    min_date, max_date = all_dates.min(), all_dates.max()
+
+    pred_date = st.date_input(
+        "Select a date:",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date,
+        help="Pick a date within the dataset range to see the model's prediction.",
+    )
+
+    pred_date_ts = pd.Timestamp(pred_date)
+    match = df_filtered[df_filtered["started_date"].dt.date == pred_date]
+
+    if len(match) == 0:
+        st.warning(f"No data for {pred_date}. Choose a date with recorded rides.")
+    else:
+        row = match.iloc[0]
+        X_single = row[feature_cols].values.reshape(1, -1)
+        pred_m1 = model1.predict(X_single)[0]
+        pred_m2 = model2.predict(X_single)[0]
+        actual = row["ride_count"]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Actual Rides", f"{actual:,.0f}")
+        with col2:
+            st.metric("Simple Split Prediction", f"{pred_m1:,.0f}",
+                      delta=f"{pred_m1 - actual:+,.0f} error")
+        with col3:
+            st.metric("Time Series CV Prediction", f"{pred_m2:,.0f}",
+                      delta=f"{pred_m2 - actual:+,.0f} error")
+
+        with st.expander("Feature values used for this prediction"):
+            feat_vals = pd.DataFrame({
+                "Feature": readable_names,
+                "Value": [f"{v:.4f}" for v in row[feature_cols].values],
+            })
+            st.dataframe(feat_vals, use_container_width=True, hide_index=True)
 
     st.subheader("📊 Predictions Visualization")
     model_choice = st.radio(
