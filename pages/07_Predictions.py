@@ -14,7 +14,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
-import plotly.graph_objects as go
 
 st.set_page_config(page_title="Predictions", page_icon="🔮", layout="wide")
 
@@ -319,9 +318,50 @@ if "results" in st.session_state:
         else:
             readable_names.append(col)
 
-    st.subheader("📈 Model Comparison")
+    # --- Single-date prediction ---
+    st.subheader("🔎 Predict for a Specific Date")
+    df_filtered = results["df_filtered"]
+    all_dates = df_filtered["started_date"].dt.date
+    min_date, max_date = all_dates.min(), all_dates.max()
 
-    # --- Helper: build feature table by prefix ---
+    pred_date = st.date_input(
+        "Select a date:",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date,
+        help="Pick a date within the dataset range to see the model's prediction.",
+    )
+
+    pred_date_ts = pd.Timestamp(pred_date)
+    match = df_filtered[df_filtered["started_date"].dt.date == pred_date]
+
+    if len(match) == 0:
+        st.warning(f"No data for {pred_date}. Choose a date with recorded rides.")
+    else:
+        row = match.iloc[0]
+        X_single = row[feature_cols].values.reshape(1, -1)
+        pred_m1 = model1.predict(X_single)[0]
+        pred_m2 = model2.predict(X_single)[0]
+        actual = row["ride_count"]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Actual Rides", f"{actual:,.0f}")
+        with col2:
+            st.metric("Simple Split Prediction", f"{pred_m1:,.0f}",
+                      delta=f"{pred_m1 - actual:+,.0f} error")
+        with col3:
+            st.metric("Time Series CV Prediction", f"{pred_m2:,.0f}",
+                      delta=f"{pred_m2 - actual:+,.0f} error")
+
+        with st.expander("Feature values used for this prediction"):
+            feat_vals = pd.DataFrame({
+                "Feature": readable_names,
+                "Value": [f"{v:.4f}" for v in row[feature_cols].values],
+            })
+            st.dataframe(feat_vals, use_container_width=True, hide_index=True)
+
+    st.subheader("� Model Comparison")
     def _get_feature_df(model, readable_names, trained_model_type, prefix):
         is_rf = trained_model_type == "Random Forest"
         value_col = "Importance" if is_rf else "Coefficient"
@@ -431,223 +471,5 @@ if "results" in st.session_state:
                 f"when all features are zero."
             )
 
-    # --- Single-date prediction ---
-    st.subheader("🔎 Predict for a Specific Date")
-    df_filtered = results["df_filtered"]
-    all_dates = df_filtered["started_date"].dt.date
-    min_date, max_date = all_dates.min(), all_dates.max()
-
-    pred_date = st.date_input(
-        "Select a date:",
-        value=max_date,
-        min_value=min_date,
-        max_value=max_date,
-        help="Pick a date within the dataset range to see the model's prediction.",
-    )
-
-    pred_date_ts = pd.Timestamp(pred_date)
-    match = df_filtered[df_filtered["started_date"].dt.date == pred_date]
-
-    if len(match) == 0:
-        st.warning(f"No data for {pred_date}. Choose a date with recorded rides.")
-    else:
-        row = match.iloc[0]
-        X_single = row[feature_cols].values.reshape(1, -1)
-        pred_m1 = model1.predict(X_single)[0]
-        pred_m2 = model2.predict(X_single)[0]
-        actual = row["ride_count"]
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Actual Rides", f"{actual:,.0f}")
-        with col2:
-            st.metric("Simple Split Prediction", f"{pred_m1:,.0f}",
-                      delta=f"{pred_m1 - actual:+,.0f} error")
-        with col3:
-            st.metric("Time Series CV Prediction", f"{pred_m2:,.0f}",
-                      delta=f"{pred_m2 - actual:+,.0f} error")
-
-        with st.expander("Feature values used for this prediction"):
-            feat_vals = pd.DataFrame({
-                "Feature": readable_names,
-                "Value": [f"{v:.4f}" for v in row[feature_cols].values],
-            })
-            st.dataframe(feat_vals, use_container_width=True, hide_index=True)
-
-    st.subheader("📊 Predictions Visualization")
-    model_choice = st.radio(
-        "**Select which training strategy's predictions to display:**",
-        options=["Simple Split", "Time Series CV"],
-        horizontal=True,
-    )
-
-    if model_choice == "Simple Split":
-        y_pred_pred = y_test_pred_m1
-        model_name = f"{trained_model_type} (Simple Split)"
-    else:
-        y_pred_pred = y_test_pred_m2
-        model_name = f"{trained_model_type} (Time Series CV)"
-
-    max_pred_diff = float(np.max(np.abs(y_test_pred_m1 - y_test_pred_m2)))
-    selected_mae = float(mean_absolute_error(y_pred_actual, y_pred_pred))
-    st.caption(
-        f"Test MAE: **{selected_mae:.2f}**  ·  "
-        f"Max difference between strategies: {max_pred_diff:.2f}"
-    )
-
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Full Time Series", "Actual vs Predicted Scatter", "Residuals", "Error Distribution"]
-    )
-
-    with tab1:
-        st.write(f"**Full Time Series: Train, Validation, and Test Sets ({model_name})**")
-        fig_full = go.Figure()
-        fig_full.add_trace(
-            go.Scatter(
-                x=train_data["started_date"],
-                y=y_train,
-                mode="lines",
-                name="Train Actual",
-                line=dict(color="blue", width=2),
-            )
-        )
-        fig_full.add_trace(
-            go.Scatter(
-                x=val_data["started_date"],
-                y=y_val,
-                mode="lines",
-                name="Validation Actual",
-                line=dict(color="green", width=2),
-            )
-        )
-        fig_full.add_trace(
-            go.Scatter(
-                x=pred_data["started_date"],
-                y=y_pred_actual,
-                mode="lines",
-                name="Test Actual",
-                line=dict(color="#636EFA", width=2),
-            )
-        )
-        fig_full.add_trace(
-            go.Scatter(
-                x=pred_data["started_date"],
-                y=y_pred_pred,
-                mode="lines",
-                name="Test Predicted",
-                line=dict(color="#EF553B", width=2, dash="dash"),
-            )
-        )
-        fig_full.update_layout(
-            title=f"Full Time Series ({model_name})",
-            xaxis_title="Date",
-            yaxis_title="Bike Flows",
-            hovermode="x unified",
-            height=500,
-        )
-        st.plotly_chart(fig_full, use_container_width=True)
-
-    with tab2:
-        st.write(f"**Actual vs Predicted Scatter Plot ({model_name})**")
-        fig_scatter = go.Figure()
-        fig_scatter.add_trace(
-            go.Scatter(
-                x=y_pred_actual,
-                y=y_pred_pred,
-                mode="markers",
-                marker=dict(size=5, color="#636EFA"),
-                name="Predictions",
-                text=[
-                    f"Actual: {a:.0f}<br>Predicted: {p:.0f}"
-                    for a, p in zip(y_pred_actual, y_pred_pred)
-                ],
-                hovertemplate="%{text}<extra></extra>",
-            )
-        )
-        min_val = min(y_pred_actual.min(), float(np.min(y_pred_pred)))
-        max_val = max(y_pred_actual.max(), float(np.max(y_pred_pred)))
-        fig_scatter.add_trace(
-            go.Scatter(
-                x=[min_val, max_val],
-                y=[min_val, max_val],
-                mode="lines",
-                line=dict(color="red", dash="dash"),
-                name="Perfect Prediction",
-            )
-        )
-        fig_scatter.update_layout(
-            title=f"Actual vs Predicted ({model_name})",
-            xaxis_title="Actual Bike Flows",
-            yaxis_title="Predicted Bike Flows",
-            height=500,
-            hovermode="closest",
-        )
-        st.plotly_chart(fig_scatter, use_container_width=True)
-
-    with tab3:
-        st.write(f"**Residuals Over Time ({model_name})**")
-        test_residuals = y_pred_actual - y_pred_pred
-        fig_resid = go.Figure()
-        fig_resid.add_trace(
-            go.Scatter(
-                x=pred_data["started_date"],
-                y=test_residuals,
-                mode="markers",
-                marker=dict(size=6, color=test_residuals, colorscale="RdBu", showscale=True),
-                name="Residual",
-            )
-        )
-        fig_resid.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="Zero Error")
-        fig_resid.update_layout(
-            title=f"Residuals ({model_name})",
-            xaxis_title="Date",
-            yaxis_title="Residual (Actual - Predicted)",
-            height=400,
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig_resid, use_container_width=True)
-
-    with tab4:
-        st.write(f"**Error Distribution ({model_name})**")
-        test_residuals = y_pred_actual - y_pred_pred
-        fig_dist = go.Figure()
-        fig_dist.add_trace(
-            go.Histogram(
-                x=test_residuals,
-                nbinsx=30,
-                name="Error Distribution",
-                marker=dict(color="#636EFA"),
-            )
-        )
-        fig_dist.add_vline(x=0, line_dash="dash", line_color="red", annotation_text="Zero Error")
-        fig_dist.update_layout(
-            title=f"Error Distribution ({model_name})",
-            xaxis_title="Error (Actual - Predicted)",
-            yaxis_title="Frequency",
-            height=400,
-            hovermode="x",
-        )
-        st.plotly_chart(fig_dist, use_container_width=True)
-
-        st.write("**Error Statistics:**")
-        error_stats = pd.DataFrame(
-            {
-                "Metric": [
-                    "Mean Error",
-                    "Std Dev",
-                    "Min Error",
-                    "Max Error",
-                    "Median Error",
-                ],
-                "Value": [
-                    f"{test_residuals.mean():.2f}",
-                    f"{test_residuals.std():.2f}",
-                    f"{test_residuals.min():.2f}",
-                    f"{test_residuals.max():.2f}",
-                    f"{test_residuals.median():.2f}",
-                ],
-            }
-        )
-        st.dataframe(error_stats, use_container_width=True, hide_index=True)
 else:
     st.info("👆 Select two NTAs, choose an algorithm, and click **Train Models** to begin.")

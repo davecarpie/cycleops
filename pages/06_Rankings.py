@@ -94,11 +94,3 @@ between **{uih.format_year_month(period1)}** and **{uih.format_year_month(period
 # Apply styling and display
 styled_df = ranking_df.style.pipe(uih.apply_styles, selected_nta, period1, period2)
 st.dataframe(styled_df, use_container_width=True, height=500)
-
-# Swarm plot
-st.markdown("---")
-st.subheader("Distribution of Changes Across All NTAs")
-
-fig = viz.get_swarmplot(period1, period2, direction, selected_nta)
-st.pyplot(fig)
-st.caption("*Each dot represents an NTA. The highlighted dot (if visible) is your selected neighborhood.*")

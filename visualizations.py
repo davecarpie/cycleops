@@ -153,8 +153,10 @@ def get_top_destinations_chart(nta, top_n=10, year_month=None):
     ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("{x:,.0f}"))
     
     # Add value labels on bars
+    max_val = df_plot["ride_count"].max()
+    ax.set_xlim(0, max_val * 1.15)
     for bar, value in zip(bars, df_plot["ride_count"]):
-        ax.text(bar.get_width() + bar.get_width() * 0.01, bar.get_y() + bar.get_height()/2,
+        ax.text(bar.get_width() + max_val * 0.01, bar.get_y() + bar.get_height()/2,
                 f'{value:,.0f}', va='center', fontsize=9)
     
     plt.tight_layout()
@@ -196,8 +198,10 @@ def get_top_origins_chart(nta, top_n=10, year_month=None):
     ax.xaxis.set_major_formatter(ticker.StrMethodFormatter("{x:,.0f}"))
     
     # Add value labels on bars
+    max_val = df_plot["ride_count"].max()
+    ax.set_xlim(0, max_val * 1.15)
     for bar, value in zip(bars, df_plot["ride_count"]):
-        ax.text(bar.get_width() + bar.get_width() * 0.01, bar.get_y() + bar.get_height()/2,
+        ax.text(bar.get_width() + max_val * 0.01, bar.get_y() + bar.get_height()/2,
                 f'{value:,.0f}', va='center', fontsize=9)
     
     plt.tight_layout()
