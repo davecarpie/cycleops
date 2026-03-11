@@ -67,8 +67,8 @@ with period_col:
 selected_year_month = None if selected_period == "All Time" else selected_period
 
 # Display tabs
-graph_tab, flow_tab, heatmap_tab = st.tabs(
-    ["📈 Trends", "🔀 Flows", "🔥 Heat Map"]
+graph_tab, heatmap_tab = st.tabs(
+    ["📈 Trends", "🔥 Heat Map"]
 )
 
 with graph_tab:
@@ -87,45 +87,6 @@ with graph_tab:
         fig = viz.get_monthly_comparison_graph(selected_nta, direction)
         st.pyplot(fig)
         st.caption("*Compare the same months across different years.*")
-
-with flow_tab:
-    st.subheader("Ride Flow Patterns")
-    
-    # Period selector for flows
-    flow_period_col, _ = st.columns([1, 2])
-    with flow_period_col:
-        flow_period = st.selectbox(
-            "Period:",
-            ["All Time"] + year_months,
-            key="flow_period",
-            format_func=lambda x: x if x == "All Time" else uih.format_year_month(x),
-            help="Filter flows by time period"
-        )
-    
-    flow_year_month = None if flow_period == "All Time" else flow_period
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if direction == "outgoing":
-            st.markdown(f"**Top Destinations from {selected_nta}**")
-            fig = viz.get_top_destinations_chart(selected_nta, 10, flow_year_month)
-        else:
-            st.markdown(f"**Top Origins to {selected_nta}**")
-            fig = viz.get_top_origins_chart(selected_nta, 10, flow_year_month)
-        st.pyplot(fig)
-    
-    with col2:
-        st.markdown("**Flow Diagram**")
-        fig = viz.get_flow_sankey(selected_nta, direction, 10, flow_year_month)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Borough-level heatmap
-    st.markdown("---")
-    st.markdown("**Borough-to-Borough Flow**")
-    fig = viz.get_borough_flow_heatmap(flow_year_month)
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption("*This heatmap shows the total number of rides between each pair of boroughs.*")
 
 with heatmap_tab:
     st.subheader("🗺️ Geographic Traffic Heat Map")
